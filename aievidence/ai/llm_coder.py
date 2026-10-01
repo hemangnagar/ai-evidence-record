@@ -1,9 +1,17 @@
 """Optional LLM coder. Same interface as the stub; a real model string in the ledger.
 
-Used only when ``aiev run-demo --coder llm`` is passed and a key is present
-(``ANTHROPIC_API_KEY`` first, else ``OPENAI_API_KEY``). The prompt template is a
-module constant so ``prompt_hash`` is stable across runs, which is what lets the
+Used when ``aiev run-demo --coder llm`` is passed. The prompt template is a module
+constant so ``prompt_hash`` is stable across runs, which is what lets the
 datasheet say "these 30 outputs came from the same prompt".
+
+Credentials follow corpuscle's pattern: a project-specific variable wins
+(``AIEV_ANTHROPIC_KEY``, then ``CORPUSCLE_ANTHROPIC_KEY`` since the two tools
+share an owner), and with it the client talks straight to api.anthropic.com
+rather than whatever ``ANTHROPIC_BASE_URL`` a hosting harness set for its own
+traffic. Some hosts refuse to pass a variable named ``ANTHROPIC_API_KEY`` into a
+session, so the project name is the reliable one. With neither set, the SDK's
+own resolution applies (``ANTHROPIC_API_KEY``, ``ANTHROPIC_AUTH_TOKEN``, an
+``ant auth login`` profile), and failing that ``OPENAI_API_KEY``.
 
 The model proposes; the gate still quarantines; a human still signs.
 """
@@ -20,7 +28,8 @@ INPUT_FIELDS = ["AETERM"]
 PROMPT_TEMPLATE = (
     "You are coding an adverse-event verbatim from a clinical trial case report form to a single "
     "MedDRA-style preferred term.\n"
-    "Return JSON only, with keys: preferred_term (string), confidence (number 0-1), rationale (one sentence).\n"
+    "Return JSON only, with keys: preferred_term (string), confidence (number 0-1), "
+    "rationale (one sentence).\n"
     "If the verbatim bundles more than one event, code the first and say so in the rationale.\n"
     "Verbatim: {verbatim}"
 )
@@ -38,20 +47,38 @@ OUTPUT_SCHEMA = {
 
 DEFAULT_ANTHROPIC_MODEL = "claude-opus-5-5"
 DEFAULT_OPENAI_MODEL = "gpt-4o-mini"
+PROJECT_KEY_VARS = ("AIEV_ANTHROPIC_KEY", "CORPUSCLE_ANTHROPIC_KEY")
+DIRECT_BASE_URL = "https://api.anthropic.com"
+
+
+def anthropic_client_kwargs(env: dict | None = None) -> dict | None:
+    """Return kwargs for ``anthropic.Anthropic`` if any Anthropic credential is available, else None."""
+    env = os.environ if env is None else env
+    for var in PROJECT_KEY_VARS:
+        if env.get(var):
+            return {"api_key": env[var], "base_url": env.get("AIEV_ANTHROPIC_BASE_URL", DIRECT_BASE_URL)}
+    if env.get("ANTHROPIC_API_KEY") or env.get("ANTHROPIC_AUTH_TOKEN"):
+        return {}
+    return None
 
 
 class LLMCoder:
     prompt_hash = prompt_hash(PROMPT_TEMPLATE)
 
-    def __init__(self, model: str | None = None):
-        if os.environ.get("ANTHROPIC_API_KEY"):
+    def __init__(self, model: str | None = None, *, fallbacks: bool = True):
+        self._anthropic_kwargs = anthropic_client_kwargs()
+        self.fallbacks = fallbacks
+        if self._anthropic_kwargs is not None:
             self.provider = "anthropic"
             self.model_id = model or os.environ.get("AIEV_LLM_MODEL", DEFAULT_ANTHROPIC_MODEL)
         elif os.environ.get("OPENAI_API_KEY"):
             self.provider = "openai"
             self.model_id = model or os.environ.get("AIEV_LLM_MODEL", DEFAULT_OPENAI_MODEL)
         else:
-            raise RuntimeError("LLMCoder needs ANTHROPIC_API_KEY or OPENAI_API_KEY in the environment")
+            raise RuntimeError(
+                "LLMCoder needs one of AIEV_ANTHROPIC_KEY, CORPUSCLE_ANTHROPIC_KEY, ANTHROPIC_API_KEY or "
+                "OPENAI_API_KEY in the environment"
+            )
         # The dated model string is the version. If the provider reports a different served model,
         # the first call updates this so the ledger carries what actually ran.
         self.model_version = self.model_id
@@ -61,13 +88,20 @@ class LLMCoder:
         import anthropic
 
         if self._client is None:
-            self._client = anthropic.Anthropic()
-        response = self._client.messages.create(
-            model=self.model_id,
-            max_tokens=1024,
-            messages=[{"role": "user", "content": prompt}],
-            output_config={"format": {"type": "json_schema", "schema": OUTPUT_SCHEMA}},
-        )
+            self._client = anthropic.Anthropic(**self._anthropic_kwargs)
+        kw = {
+            "model": self.model_id,
+            "max_tokens": 1024,
+            "messages": [{"role": "user", "content": prompt}],
+            "output_config": {"format": {"type": "json_schema", "schema": OUTPUT_SCHEMA}},
+        }
+        if self.fallbacks:
+            # Server-side refusal fallback: a safety decline re-runs on a fallback model inside the same call.
+            response = self._client.beta.messages.create(
+                betas=["server-side-fallback-2026-07-01"], fallbacks="default", **kw
+            )
+        else:
+            response = self._client.messages.create(**kw)
         if response.stop_reason == "refusal":
             raise RuntimeError("model declined the request")
         if response.model:

@@ -93,7 +93,7 @@ every event: seq, ts, agent, record_ref, field, payload, prev_hash, hash
 - **Rules** (`aievidence/rules.py`): seven exception rules evaluated over the whole ledger. They never trust a payload's claim about another event; a promote that *says* it was reviewed is still EX-01 if no review event exists.
 - **Profile** (`aievidence/profiles/clinical_gcp.yaml`): thresholds, citations, the crosswalk and the ALCOA+ scorecard are content, not code. A wrong clause number is a one-line fix and changes the profile fingerprint printed on the datasheet. A GMP profile would be a second file with no code change.
 - **Datasheet** (`aievidence/datasheet.py`): one printable HTML file plus `manifest.json` carrying the ledger head hash, event count and profile fingerprint under a signature. Demo signing is HMAC; `Ed25519Signer` is the production choice.
-- **AI adapters** (`aievidence/ai/`): a deterministic stub coder and query generator, and an optional LLM coder (`aiev run-demo --coder llm` with `ANTHROPIC_API_KEY` or `OPENAI_API_KEY`) that records the real model string and a prompt hash that is stable across runs.
+- **AI adapters** (`aievidence/ai/`): a deterministic stub coder and query generator, and an optional LLM coder (`aiev run-demo --coder llm`) that records the real model string and a prompt hash that is stable across runs. Credentials: `AIEV_ANTHROPIC_KEY` or `CORPUSCLE_ANTHROPIC_KEY` first (talks straight to api.anthropic.com), else the Anthropic SDK's own resolution (`ANTHROPIC_API_KEY`), else `OPENAI_API_KEY`. Default model `claude-opus-5-5`, override with `AIEV_LLM_MODEL`.
 
 ## Exceptions
 

@@ -251,7 +251,12 @@ def build_parser() -> argparse.ArgumentParser:
     s = p.add_subparsers(dest="cmd", required=True)
 
     r = s.add_parser("run-demo", help="synthesise the study and run the planted scenario")
-    r.add_argument("--coder", choices=["stub", "llm"], default="stub")
+    r.add_argument(
+        "--coder",
+        choices=["stub", "llm"],
+        default="stub",
+        help="llm needs AIEV_ANTHROPIC_KEY / CORPUSCLE_ANTHROPIC_KEY / ANTHROPIC_API_KEY or OPENAI_API_KEY",
+    )
     r.add_argument("--seed", type=int, default=7)
     r.set_defaults(fn=cmd_run_demo)
 
