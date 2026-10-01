@@ -1,0 +1,304 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI Evidence Workbench · {{ study_id }}</title>
+<style>
+  :root { --ink:#111; --muted:#555; --line:#bbb; --flag:#8a1c1c; --pass:#1d5c2a; --bg:#fff; --soft:#f4f4f2; --accent:#1f3a5f; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--ink); }
+  body { font: 14px/1.45 Georgia, "Times New Roman", serif; }
+  header { padding: 14px 24px 0; border-bottom: 1px solid var(--line); background: var(--soft); }
+  header h1 { font-size: 20px; margin: 0 0 2px; }
+  header .tag { color: var(--muted); font-style: italic; margin: 0 0 10px; }
+  .status { display: flex; flex-wrap: wrap; gap: 18px; font-size: 13px; margin-bottom: 10px; }
+  .status b { font-weight: 600; }
+  nav { display: flex; flex-wrap: wrap; gap: 2px; }
+  nav button { font: inherit; font-size: 13px; padding: 7px 12px; border: 1px solid var(--line); border-bottom: none; background: #e9e9e6; cursor: pointer; }
+  nav button.active { background: var(--bg); font-weight: 600; }
+  main { padding: 20px 24px 40px; max-width: 1200px; }
+  h2 { font-size: 16px; margin: 0 0 6px; }
+  h3 { font-size: 14px; margin: 18px 0 6px; }
+  p { margin: 6px 0; }
+  .lead { color: var(--muted); margin-bottom: 14px; }
+  .mono { font-family: "SFMono-Regular", Consolas, Menlo, monospace; font-size: 12px; }
+  pre { font-family: "SFMono-Regular", Consolas, Menlo, monospace; font-size: 12px; background: var(--soft); border: 1px solid var(--line); padding: 10px 12px; white-space: pre-wrap; word-break: break-word; margin: 8px 0; max-height: 520px; overflow: auto; }
+  pre.ledger { max-height: 560px; }
+  pre .broken { background: #f6d9d9; display: block; }
+  pre .seq { color: var(--muted); }
+  table { border-collapse: collapse; width: 100%; margin: 8px 0; font-size: 12.5px; }
+  th, td { border: 1px solid var(--line); padding: 5px 7px; text-align: left; vertical-align: top; }
+  th { background: #f2f2f2; font-weight: 600; }
+  .flag { color: var(--flag); font-weight: 700; }
+  .pass { color: var(--pass); font-weight: 700; }
+  .warn { color: var(--flag); }
+  .box { border: 1px solid var(--line); padding: 10px 12px; margin: 8px 0; background: #fff; }
+  .row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin: 6px 0; }
+  label { font-size: 13px; }
+  input[type=text], input[type=number], select { font: inherit; font-size: 13px; padding: 4px 6px; border: 1px solid var(--line); }
+  input[type=text] { min-width: 220px; }
+  button.act { font: inherit; font-size: 13px; padding: 5px 11px; border: 1px solid var(--accent); background: var(--accent); color: #fff; cursor: pointer; }
+  button.act.secondary { background: #fff; color: var(--accent); }
+  button.act.danger { background: var(--flag); border-color: var(--flag); }
+  .muted { color: var(--muted); }
+  .timer { font-family: "SFMono-Regular", Consolas, Menlo, monospace; font-size: 22px; }
+  .hidden { display: none; }
+  footer { padding: 12px 24px; border-top: 1px solid var(--line); color: var(--muted); font-size: 12px; display: flex; gap: 16px; flex-wrap: wrap; align-items: center; }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  @media (max-width: 900px) { .grid2 { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>AI Evidence Workbench <span class="muted" style="font-weight:normal">· study {{ study_id }}</span></h1>
+  <p class="tag">When the inspector asks what the AI did to this record, this is the answer. Everything here runs in this page; nothing leaves your machine.</p>
+  <div class="status" id="status"></div>
+  <nav id="nav"></nav>
+</header>
+<main id="main"></main>
+<footer>
+  <span>Ledger source: <span id="source"></span></span>
+  <button class="act secondary" onclick="UI.downloadLedger()">Download ledger.jsonl</button>
+  <button class="act secondary" onclick="UI.downloadFindings()">Download exceptions.json</button>
+  <button class="act secondary" onclick="UI.reset()">Reset to the original demo state</button>
+  <span>Synthetic study; no real subjects. Profile {{ profile_version }}, fingerprint <span class="mono">{{ profile_fingerprint[:16] }}…</span></span>
+</footer>
+
+<script id="aiev-data" type="application/json">{{ data_json|safe }}</script>
+<script>{{ engine_js|safe }}</script>
+<script>
+(function () {
+  const D = JSON.parse(document.getElementById("aiev-data").textContent);
+  const R = Object.fromEntries(D.reviewers.map((r) => [r.id, r]));
+  const esc = (s) => String(s === null || s === undefined ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  const $ = (id) => document.getElementById(id);
+  let state, active = "data", lastTamper = null, review = null, lastRun = null, reviewerId = "rmehta";
+
+  function reset() {
+    state = {
+      ledger: new AIEV.Ledger(D.events),
+      store: new AIEV.MemoryStore({ ae: AIEV.clone(D.ae), cm: AIEV.clone(D.cm), dm: AIEV.clone(D.dm), queries: AIEV.clone(D.queries) }),
+      source: "aiev run-demo (Python), embedded at build time",
+    };
+    lastTamper = null; review = null; lastRun = null;
+    refresh();
+  }
+  const gate = () => new AIEV.Gate(state.ledger, D.study_id, state.store);
+  const verify = () => state.ledger.verify();
+  const findings = () => AIEV.evaluate(state.ledger.events, D.profile, R, verify());
+  const counts = (fs) => { const c = {}; fs.forEach((f) => (c[f.id] = (c[f.id] || 0) + 1)); return c; };
+  const countText = (c) => Object.keys(c).sort().map((k) => k + " ×" + c[k]).join("   ") || "none";
+
+  // ---- status + nav -----------------------------------------------------------
+  const TABS = [
+    ["data", "1 · Site data"], ["ledger", "2 · Ledger"], ["ask", "3 · Ask a record"], ["tamper", "4 · Tamper"],
+    ["review", "5 · Review"], ["drift", "6 · Model drift"], ["exceptions", "7 · Exceptions"], ["datasheet", "8 · Datasheet"],
+  ];
+  function refresh() {
+    const vr = verify(), fs = findings();
+    $("status").innerHTML =
+      "<span><b>" + state.ledger.length + "</b> events</span>" +
+      "<span>head <span class='mono'>" + esc(vr.head_hash.slice(0, 16)) + "…</span></span>" +
+      "<span>chain " + (vr.ok ? "<span class='pass'>OK</span>" : "<span class='flag'>BROKEN at seq " + vr.first_broken_seq + "</span>") + "</span>" +
+      "<span>exceptions <b>" + fs.length + "</b> <span class='mono'>" + esc(countText(counts(fs))) + "</span></span>";
+    $("source").textContent = state.source;
+    $("nav").innerHTML = TABS.map(([id, label]) => "<button class='" + (id === active ? "active" : "") + "' data-tab='" + id + "'>" + label + "</button>").join("");
+    $("nav").querySelectorAll("button").forEach((b) => (b.onclick = () => { active = b.dataset.tab; refresh(); }));
+    $("main").innerHTML = VIEWS[active]();
+    if (AFTER[active]) AFTER[active]();
+  }
+
+  // ---- views ---------------------------------------------------------------------
+  function table(rows, cols) {
+    if (!rows.length) return "<p class='muted'>none</p>";
+    cols = cols || Object.keys(rows[0]);
+    return "<table><tr>" + cols.map((c) => "<th>" + esc(c) + "</th>").join("") + "</tr>" +
+      rows.map((r) => "<tr>" + cols.map((c) => "<td>" + esc(r[c]) + "</td>").join("") + "</tr>").join("") + "</table>";
+  }
+  const VIEWS = {};
+  const AFTER = {};
+
+  VIEWS.data = () => {
+    const ae = state.store.ae.map((r) => Object.assign({}, r, { AEDECOD: r.AEDECOD || "" }));
+    return "<h2>Site data as entered</h2><p class='lead'>Is this what site data looks like? AEDECOD is blank until a human signs the AI's proposal; the column updates as you promote.</p>" +
+      "<h3>AE · adverse events (" + ae.length + ")</h3>" +
+      "<table><tr><th>USUBJID</th><th>AESEQ</th><th>AETERM (verbatim)</th><th>AEDECOD (coded)</th><th>Start</th><th>End</th><th>Sev</th><th>Ser</th><th>Rel</th><th>Status</th></tr>" +
+      ae.map((r) => { const ref = "AE:" + r.USUBJID + ":" + r.AESEQ; const st = gate().status(ref, "AEDECOD"); return "<tr><td class='mono'>" + esc(r.USUBJID) + "</td><td>" + esc(r.AESEQ) + "</td><td>" + esc(r.AETERM) + "</td><td>" + (r.AEDECOD ? esc(r.AEDECOD) : "<span class='muted'>—</span>") + "</td><td>" + esc(r.AESTDTC) + "</td><td>" + esc(r.AEENDTC) + "</td><td>" + esc(r.AESEV) + "</td><td>" + esc(r.AESER) + "</td><td>" + esc(r.AEREL) + "</td><td>" + (st === "QUARANTINED" ? "<span class='warn'>QUARANTINED</span>" : st) + "</td></tr>"; }).join("") + "</table>" +
+      "<h3>DM · demographics</h3>" + table(state.store.dm) +
+      "<h3>CM · concomitant medications</h3>" + table(state.store.cm) +
+      "<h3>Queries issued to sites</h3>" + table(state.store.queries, ["record_ref", "query_text", "ledger_seq"]);
+  };
+
+  VIEWS.ledger = () => {
+    const vr = verify();
+    const lines = state.ledger.events.map((e) => "<span class='" + (vr.first_broken_seq === e.seq ? "broken" : "") + "'><span class='seq'>" + String(e.seq).padStart(3) + "</span> " + esc(AIEV.pretty(e)) + "</span>").join("\n");
+    return "<h2>The ledger, raw</h2><p class='lead'>One JSON line per event. Each carries the SHA-256 of the one before it. Nothing is ever deleted; corrections are new events pointing at the old seq.</p>" +
+      "<div class='row'><button class='act' onclick='UI.verifyNow()'>Verify chain</button><span id='verify-out' class='mono'>" + esc(vr.text) + "</span></div>" +
+      "<pre class='ledger'>" + lines + "</pre>";
+  };
+
+  VIEWS.ask = () => {
+    const refs = [...new Set(state.ledger.events.map((e) => e.record_ref))].sort();
+    const sel = (window._askRef && refs.includes(window._askRef)) ? window._askRef : "AE:AIEV-001-1042:3";
+    return "<h2>What did the AI do to this record?</h2><p class='lead'>An inspector asks what the AI did to this subject's third adverse event.</p>" +
+      "<div class='row'><label>Record <select id='ask-ref'>" + refs.map((r) => "<option " + (r === sel ? "selected" : "") + ">" + esc(r) + "</option>").join("") + "</select></label>" +
+      "<label>Field <select id='ask-field'><option value=''>all</option><option>AEDECOD</option><option>QUERY</option></select></label>" +
+      "<button class='act' onclick='UI.ask()'>Ask</button></div><pre id='ask-out'></pre>";
+  };
+  AFTER.ask = () => UI.ask();
+
+  VIEWS.tamper = () => {
+    const vr = verify();
+    return "<h2>Edit one line in place, then verify</h2><p class='lead'>Demo only. This is the thing the ledger exists to make detectable. Change any field of any event; the stored hash no longer matches. Tick <i>recompute this event's hash</i> to do what a more careful attacker would, and watch the break move to the next event instead. Recomputing every later hash would hide the edit from verify alone, which is why the signed manifest carries the head hash.</p>" +
+      "<div class='row'><label>seq <input type='number' id='t-seq' value='16' min='1' max='" + state.ledger.length + "' style='width:80px'></label>" +
+      "<label>field <input type='text' id='t-field' value='payload.value'></label>" +
+      "<label>new value <input type='text' id='t-value' value='Migraine'></label>" +
+      "<label><input type='checkbox' id='t-rehash'> recompute this event's hash</label>" +
+      "<button class='act danger' onclick='UI.tamper()'>Tamper</button><button class='act secondary' onclick='UI.reset()'>Reset</button></div>" +
+      "<p class='mono'>current: " + esc(vr.text) + "</p>" +
+      (lastTamper ? "<h3>Before</h3><pre>" + esc(AIEV.pretty(lastTamper[0])) + "</pre><h3>After</h3><pre>" + esc(AIEV.pretty(lastTamper[1])) + "</pre><p class='mono'>" + (vr.ok ? "<span class='pass'>" + esc(vr.text) + "</span>" : "<span class='flag'>" + esc(vr.text) + "</span>") + "</p>" : "") +
+      "<h3>Event " + "<span id='t-preview-seq'></span></h3><pre id='t-preview'>" + esc(AIEV.pretty(state.ledger.get(16) || {})) + "</pre>";
+  };
+  AFTER.tamper = () => { const s = $("t-seq"); const show = () => { const e = state.ledger.get(Number(s.value)); $("t-preview").textContent = e ? AIEV.pretty(e) : "(no such seq)"; }; s.oninput = show; show(); };
+
+  VIEWS.review = () => {
+    const g = gate();
+    const pend = [];
+    const seen = new Set();
+    for (const e of state.ledger.events) {
+      if (e.event_type !== "ai_output") continue;
+      const key = e.record_ref + "|" + e.field;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const st = g.status(e.record_ref, e.field);
+      if (st === "QUARANTINED" || st === "REVIEWED") pend.push({ ref: e.record_ref, field: e.field, status: st, out: g.latestOutput(e.record_ref, e.field) });
+    }
+    let html = "<h2>Review what the AI proposed</h2><p class='lead'>Only a review with a printed name, time and meaning of signature can move a value out of quarantine. The clock starts when you open a proposal and stops when you decide; that number goes into the ledger as review_seconds. Under 5 seconds is EX-02. Signing as Tove Lindqvist (no credential on file) is EX-05. Forcing a promotion without review is EX-01.</p>";
+    html += "<div class='row'><label>Reviewer <select id='rv-reviewer'>" + D.reviewers.map((r) => "<option value='" + esc(r.id) + "'" + (r.id === reviewerId ? " selected" : "") + ">" + esc(r.display_name) + (r.credential ? " · " + esc(r.credential) : " · NO CREDENTIAL") + "</option>").join("") + "</select></label></div>";
+    html += "<h3>In quarantine (" + pend.length + ")</h3>";
+    if (!pend.length) html += "<p class='muted'>Nothing pending. Re-run the scenario in the Model drift tab, or Reset.</p>";
+    else html += "<table><tr><th>Record</th><th>Field</th><th>Verbatim</th><th>AI proposed</th><th>Conf.</th><th>Status</th><th></th></tr>" + pend.map((p) => { const ae = state.store.ae.find((r) => "AE:" + r.USUBJID + ":" + r.AESEQ === p.ref) || {}; return "<tr><td class='mono'>" + esc(p.ref) + "</td><td>" + esc(p.field) + "</td><td>" + esc(ae.AETERM || "") + "</td><td>" + esc(p.out.payload.value) + "</td><td>" + esc(p.out.payload.confidence) + "</td><td>" + esc(p.status) + "</td><td><button class='act' onclick='UI.openReview(" + JSON.stringify(p.ref) + "," + JSON.stringify(p.field) + ")'>Open for review</button> <button class='act danger' onclick='UI.forcePromote(" + JSON.stringify(p.ref) + "," + JSON.stringify(p.field) + ")'>Promote without review</button></td></tr>"; }).join("") + "</table>";
+    if (review) {
+      const o = review.out;
+      html += "<div class='box' id='rv-panel'><h3 style='margin-top:0'>" + esc(review.ref) + " · " + esc(review.field) + "</h3>" +
+        "<p><b>Verbatim:</b> " + esc(review.verbatim) + "</p>" +
+        "<p><b>AI proposed:</b> " + esc(o.payload.value) + " <span class='muted'>(confidence " + esc(o.payload.confidence) + ", " + esc(o.agent.id) + " v" + esc(o.agent.version) + ")</span></p>" +
+        "<p><b>Rationale:</b> " + esc(o.payload.rationale) + "</p>" +
+        "<p class='mono muted'>inputs_hash " + esc(o.payload.inputs_hash) + "<br>prompt_hash " + esc(o.payload.prompt_hash) + "</p>" +
+        "<p>Time on this review: <span class='timer' id='rv-timer'>0.0s</span></p>" +
+        "<div class='row'><button class='act' onclick='UI.decide(\"approve\")'>Approve</button>" +
+        "<label>or edit to <input type='text' id='rv-edit' placeholder='preferred term'></label><button class='act' onclick='UI.decide(\"edit\")'>Edit &amp; approve</button>" +
+        "<button class='act secondary' onclick='UI.decide(\"reject\")'>Reject</button>" +
+        "<label>note <input type='text' id='rv-note' placeholder='optional'></label></div></div>";
+    }
+    if (window._reviewResult) html += "<h3>Recorded</h3><pre>" + esc(window._reviewResult) + "</pre>";
+    return html;
+  };
+  AFTER.review = () => { $("rv-reviewer").onchange = (e) => { reviewerId = e.target.value; }; if (review) { const t = $("rv-timer"); if (review.timer) clearInterval(review.timer); review.timer = setInterval(() => { t.textContent = ((performance.now() - review.started) / 1000).toFixed(1) + "s"; }, 100); } };
+
+  VIEWS.drift = () => {
+    const p = lastRun ? lastRun.plants : D.plants;
+    const refs = state.store.ae.map((r) => "AE:" + r.USUBJID + ":" + r.AESEQ);
+    return "<h2>Change the scenario and re-run it</h2><p class='lead'>The planted problems are parameters, not fixtures. Move the model version bump, declare it properly, change who was rubber-stamped, then re-run. The ledger is regenerated here in the browser with real hashes; download it and <span class='mono'>aiev verify</span> will accept it.</p>" +
+      "<div class='box'><div class='row'><label>Coder becomes version <input type='text' id='d-to' value='" + esc(p.version_bump_to) + "' style='min-width:90px'></label>" +
+      "<label>after <input type='number' id='d-after' value='" + esc(p.version_bump_after) + "' min='0' max='99' style='width:70px'></label> coding events" +
+      "<label><input type='checkbox' id='d-declare' " + (p.declare_change ? "checked" : "") + "> record a model_change event first (change control)</label></div>" +
+      "<div class='row'><label>Promote without review <select id='d-unrev'><option value=''>none</option>" + refs.map((r) => "<option " + (r === p.unreviewed_promotion ? "selected" : "") + ">" + esc(r) + "</option>").join("") + "</select></label>" +
+      "<label>Rubber-stamp <select id='d-rubber'><option value=''>none</option>" + refs.map((r) => "<option " + (r === p.rubber_stamp_record ? "selected" : "") + ">" + esc(r) + "</option>").join("") + "</select></label>" +
+      "<label>in <input type='number' id='d-secs' value='" + esc(p.rubber_stamp_seconds) + "' step='0.5' min='0' style='width:70px'></label> seconds</div>" +
+      "<div class='row'><button class='act' onclick='UI.rerun()'>Re-run scenario</button><button class='act secondary' onclick='UI.reset()'>Back to the original ledger</button></div></div>" +
+      (lastRun ? "<p>Re-ran in the browser: <b>" + lastRun.summary.events + "</b> events, " + lastRun.summary.ai_outputs + " AI outputs, " + lastRun.summary.reviewed + " reviewed, " + lastRun.summary.promoted + " promoted, " + lastRun.summary.pending + " still in quarantine. Exceptions now: <span class='mono'>" + esc(countText(counts(findings()))) + "</span>. See tab 7.</p>" : "") +
+      "<p class='muted'>The Python scenario in <span class='mono'>demo/scenario.py</span> takes the same parameters; <span class='mono'>aiev run-demo</span> rebuilds the ledger the CLI uses.</p>";
+  };
+
+  VIEWS.exceptions = () => {
+    const fs = findings(), vr = verify();
+    return "<h2>What an inspector would find</h2><p class='lead'>Every rule evaluates the whole ledger and never trusts a payload's claim about another event. Thresholds and citations come from the profile.</p>" +
+      "<p class='mono'>" + esc(countText(counts(fs))) + (vr.ok ? "" : " · chain: " + esc(vr.text)) + "</p>" +
+      (fs.length ? "<table><tr><th>ID</th><th>Severity</th><th>Record</th><th>Seq</th><th>Finding</th><th>Citation</th></tr>" + fs.map((f) => "<tr><td class='mono'>" + esc(f.id) + "</td><td class='" + (f.severity === "critical" ? "flag" : "") + "'>" + esc(f.severity) + "</td><td class='mono'>" + esc(f.record_ref) + "</td><td>" + f.seq + "</td><td>" + esc(f.explanation) + "</td><td>" + esc(f.citation) + "</td></tr>").join("") + "</table>" : "<p class='pass'>No exceptions.</p>") +
+      "<h3>The rules</h3><table><tr><th>ID</th><th>Rule</th><th>Severity</th><th>Citation</th></tr>" + Object.entries(D.profile.rules).map(([id, r]) => "<tr><td class='mono'>" + esc(id) + "</td><td>" + esc(r.name) + "</td><td>" + esc(r.severity) + "</td><td>" + esc(r.citation) + "</td></tr>").join("") + "</table>";
+  };
+
+  VIEWS.datasheet = () => {
+    const ev = state.ledger.events, vr = verify(), fs = findings(), fc = counts(fs), flagged = new Set(fs.map((f) => f.id));
+    const outs = ev.filter((e) => e.event_type === "ai_output"), revs = ev.filter((e) => e.event_type === "review"), promos = ev.filter((e) => e.event_type === "promote");
+    const inv = {};
+    for (const o of outs) { const m = inv[o.agent.id] = inv[o.agent.id] || { versions: [], first: o.ts, last: o.ts, n: 0, ph: new Set(), fields: new Set() }; if (!m.versions.includes(o.agent.version)) m.versions.push(o.agent.version); m.first = m.first < o.ts ? m.first : o.ts; m.last = m.last > o.ts ? m.last : o.ts; m.n++; m.ph.add(o.payload.prompt_hash); m.fields.add(o.field); }
+    const declared = {}; ev.filter((e) => e.event_type === "model_change").forEach((e) => (declared[e.payload.model_id] = e.payload.new_version));
+    const rl = {};
+    for (const r of revs) { const d = rl[r.agent.id] = rl[r.agent.id] || { name: r.payload.signature.printed_name, cred: r.agent.credential || "", n: 0, approve: 0, edit: 0, reject: 0, secs: [] }; d.n++; d[r.payload.decision]++; if (r.payload.review_seconds != null) d.secs.push(Number(r.payload.review_seconds)); }
+    const median = (a) => { if (!a.length) return "—"; const s = [...a].sort((x, y) => x - y); const m = s.length >> 1; return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2; };
+    const g = gate(); let pending = 0; const seen = new Set();
+    for (const o of outs) { const k = o.record_ref + "|" + o.field; if (seen.has(k)) continue; seen.add(k); if (g.status(o.record_ref, o.field) === "QUARANTINED") pending++; }
+    const tp = Object.entries(D.profile.touchpoints).map(([field, t]) => { const n = outs.filter((o) => o.field === field).length; const tier = ((D.profile.risk_matrix || {})[t.influence] || {})[t.consequence] || "unrated"; return { field, t, n, tier }; });
+    return "<h2>AI Evidence Datasheet <span class='muted' style='font-weight:normal'>· live from the current ledger</span></h2><p class='lead'>Read it as if preparing to defend it. Write down every field you would ask for that is not here; that list is the backlog. The CLI writes the full printable version with a signed manifest (<span class='mono'>aiev datasheet</span>).</p>" +
+      "<h3>1 · Header and integrity</h3><table><tr><td>Study</td><td>" + esc(D.study_id) + "</td></tr><tr><td>Ledger events</td><td>" + ev.length + "</td></tr><tr><td>Ledger head hash</td><td class='mono'>" + esc(vr.head_hash) + "</td></tr><tr><td>Chain verification</td><td>" + (vr.ok ? "<span class='pass'>OK</span>" : "<span class='flag'>BROKEN</span>") + " · " + esc(vr.text) + "</td></tr><tr><td>Profile</td><td>" + esc(D.profile_version) + " <span class='mono'>" + esc(D.profile_fingerprint) + "</span></td></tr><tr><td>Gate</td><td>" + outs.length + " AI outputs · " + revs.length + " reviews · " + promos.length + " promoted (" + promos.filter((p) => p.payload.forced).length + " without review) · " + pending + " in quarantine</td></tr></table>" +
+      "<h3>2 · Context of use</h3>" + tp.map(({ field, t, n }) => "<div class='box'><p><b>" + esc(t.name) + "</b> <span class='mono'>" + esc(field) + "</span> · " + n + " outputs</p><p><b>Question.</b> " + esc(t.question) + "</p><p><b>Influences.</b> " + esc(t.influences) + "</p><p><b>Who decides.</b> " + esc(t.decides) + "</p></div>").join("") +
+      "<h3>3 · Model inventory</h3><table><tr><th>Model</th><th>Versions seen</th><th>Declared change</th><th>First use</th><th>Last use</th><th>Outputs</th><th>Fields</th><th>Prompt hashes</th></tr>" + Object.entries(inv).map(([id, m]) => "<tr><td class='mono'>" + esc(id) + "</td><td>" + (m.versions.length > 1 ? "<span class='flag'>" + esc(m.versions.join(" → ")) + "</span>" : esc(m.versions.join(", "))) + "</td><td>" + esc(declared[id] || "none") + "</td><td>" + esc(m.first) + "</td><td>" + esc(m.last) + "</td><td>" + m.n + "</td><td>" + esc([...m.fields].join(", ")) + "</td><td class='mono'>" + [...m.ph].map(esc).join("<br>") + "</td></tr>").join("") + "</table>" +
+      "<h3>4 · Model risk</h3><table><tr><th>Touchpoint</th><th>Influence</th><th>Consequence</th><th>Tier</th></tr>" + tp.map(({ t, tier }) => "<tr><td>" + esc(t.name) + "</td><td>" + esc(t.influence) + "</td><td>" + esc(t.consequence) + "</td><td class='" + (tier === "high" ? "flag" : "") + "'>" + esc(tier.toUpperCase()) + "</td></tr>").join("") + "</table>" +
+      "<h3>5 · Review log</h3><table><tr><th>Reviewer</th><th>Credential</th><th>In directory</th><th>Reviews</th><th>Approve</th><th>Edit</th><th>Reject</th><th>Median s</th><th>Min s</th></tr>" + Object.entries(rl).map(([id, d]) => { const mn = d.secs.length ? Math.min(...d.secs) : null; return "<tr><td>" + esc(d.name) + " <span class='mono muted'>" + esc(id) + "</span></td><td>" + (d.cred ? esc(d.cred) : "<span class='flag'>none</span>") + "</td><td>" + (R[id] ? "yes" : "<span class='flag'>no</span>") + "</td><td>" + d.n + "</td><td>" + d.approve + "</td><td>" + d.edit + "</td><td>" + d.reject + "</td><td>" + esc(median(d.secs)) + "</td><td>" + (mn !== null && mn < 5 ? "<span class='flag'>" + mn + "</span>" : esc(mn === null ? "—" : mn)) + "</td></tr>"; }).join("") + "</table>" +
+      "<h3>6 · Exceptions</h3><p class='mono'>" + esc(countText(fc)) + "</p>" +
+      "<h3>7 · ALCOA+ scorecard</h3><table><tr><th>Attribute</th><th>Status</th><th>Satisfied by</th><th>Citation</th><th>Flagged by</th></tr>" + D.profile.alcoa.map((a) => { const hits = (a.flagged_by || []).filter((id) => flagged.has(id)); return "<tr><td>" + esc(a.attribute) + "</td><td class='" + (hits.length ? "flag" : "pass") + "'>" + (hits.length ? "FLAG" : "PASS") + "</td><td>" + esc(a.fields) + "</td><td>" + esc(a.citation) + "</td><td class='mono'>" + esc(hits.join(", ")) + "</td></tr>"; }).join("") + "</table>" +
+      "<h3>8 · Crosswalk</h3><table><tr><th>Record field</th><th>ALCOA+</th><th>21 CFR Part 11</th><th>ICH E6(R3)</th><th>FDA AI credibility step</th></tr>" + D.profile.crosswalk.map((c) => "<tr><td class='mono'>" + esc(c.field) + "</td><td>" + esc(c.alcoa) + "</td><td>" + esc(c.part11) + "</td><td>" + esc(c.e6r3) + "</td><td>" + esc(c.fda_step) + "</td></tr>").join("") + "</table>";
+  };
+
+  // ---- actions ---------------------------------------------------------------------
+  const UI = {
+    reset,
+    verifyNow() { refresh(); },
+    ask() { const ref = $("ask-ref").value; window._askRef = ref; const f = $("ask-field").value || null; const c = AIEV.chain(state.ledger.events, ref, f); $("ask-out").textContent = c.lines.length ? AIEV.renderChain(c) : "no events for " + ref; },
+    tamper() {
+      const seq = Number($("t-seq").value), field = $("t-field").value.trim(); let v = $("t-value").value;
+      try { v = JSON.parse(v); } catch (e) { /* keep as string */ }
+      try { lastTamper = state.ledger.tamper(seq, field, v, $("t-rehash").checked); state.source += " · tampered at seq " + seq; } catch (e) { alert(e.message); return; }
+      refresh();
+    },
+    openReview(ref, field) {
+      const g = gate(); const out = g.latestOutput(ref, field);
+      const ae = state.store.ae.find((r) => "AE:" + r.USUBJID + ":" + r.AESEQ === ref) || {};
+      window._reviewResult = null;
+      review = { ref, field, out, verbatim: field === "QUERY" ? ae.AETERM + " (" + ae.AESTDTC + " → " + ae.AEENDTC + ", " + (ae.AESEV || "no severity") + ")" : ae.AETERM, started: performance.now(), timer: null };
+      refresh();
+      $("rv-panel").scrollIntoView({ behavior: "smooth", block: "center" });
+    },
+    decide(decision) {
+      if (!review) return;
+      const secs = Math.round(((performance.now() - review.started) / 1000) * 10) / 10;
+      const reviewer = R[reviewerId];
+      const edited = ($("rv-edit") || {}).value || null, note = ($("rv-note") || {}).value || null;
+      const g = gate(); const lines = [];
+      try {
+        const rv = g.review(review.ref, review.field, reviewer, decision, { edited_value: edited, review_seconds: secs, note });
+        lines.push("seq " + rv.seq + "  review   " + rv.payload.signature.meaning + " · signed " + rv.payload.signature.printed_name + " (" + (rv.agent.credential || "NO CREDENTIAL") + ") · " + secs + "s");
+        if (decision === "reject") { const rj = g.reject(review.ref, review.field); lines.push("seq " + rj.seq + "  reject   value not written"); }
+        else { const pr = g.promote(review.ref, review.field); lines.push("seq " + pr.seq + "  promote  " + review.field + " = " + JSON.stringify(pr.payload.value) + " written to the dataset"); }
+        const fs = findings().filter((f) => f.seq >= lines.length && f.record_ref === review.ref && f.seq > review.out.seq);
+        if (fs.length) lines.push("", "exceptions raised by this review:", ...fs.map((f) => "  " + f.id + "  " + f.explanation));
+        else lines.push("", "no exception raised by this review");
+      } catch (e) { lines.push("gate refused: " + e.message); }
+      if (review.timer) clearInterval(review.timer);
+      review = null; window._reviewResult = lines.join("\n"); state.source += " · +review";
+      refresh();
+    },
+    forcePromote(ref, field) {
+      try { const pr = gate().promote(ref, field, { force: true }); window._reviewResult = "seq " + pr.seq + "  promote  " + field + " = " + JSON.stringify(pr.payload.value) + " WITHOUT A REVIEW (forced). EX-01 will name it."; state.source += " · +forced promote"; } catch (e) { alert(e.message); }
+      refresh();
+    },
+    rerun() {
+      const plants = { version_bump_to: $("d-to").value.trim() || "1.1.0", version_bump_after: Number($("d-after").value), declare_change: $("d-declare").checked, unreviewed_promotion: $("d-unrev").value || null, rubber_stamp_record: $("d-rubber").value || null, rubber_stamp_seconds: Number($("d-secs").value), leave_pending: D.plants.leave_pending, endorse: D.plants.endorse };
+      const r = AIEV.runScenario(D, plants);
+      state = { ledger: r.ledger, store: r.store, source: "re-run in this browser (" + new Date().toISOString() + ")" };
+      lastTamper = null; review = null; window._reviewResult = null; lastRun = { plants, summary: r.summary };
+      refresh();
+    },
+    downloadLedger() { download("ledger.jsonl", state.ledger.toJSONL(), "application/x-ndjson"); },
+    downloadFindings() { download("exceptions.json", JSON.stringify(findings(), null, 2), "application/json"); },
+  };
+  function download(name, text, type) { const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([text], { type })); a.download = name; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000); }
+  window.UI = UI;
+  reset();
+})();
+</script>
+</body>
+</html>

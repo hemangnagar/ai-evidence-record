@@ -8,6 +8,7 @@ from run to run, which means ``aiev run-demo`` is also the reset button.
 
 from __future__ import annotations
 
+import importlib.util
 import random
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -31,6 +32,18 @@ class Plants:
     version_bump_to: str = "1.1.0"
     leave_pending: list[str] = field(default_factory=lambda: ["AE:AIEV-001-1096:2", "AE:AIEV-001-1128:2"])
     endorse: list[str] = field(default_factory=lambda: ["AE:AIEV-001-1001:1", "AE:AIEV-001-1042:1"])
+
+
+def load_plants(demo_dir: str | Path) -> Plants:
+    """``demo/scenario.py`` is the editable source of truth; fall back to defaults when absent."""
+    path = Path(demo_dir) / "scenario.py"
+    if not path.exists():
+        return Plants()
+    spec = importlib.util.spec_from_file_location("aiev_demo_scenario", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)  # type: ignore[union-attr]
+    plants = getattr(module, "PLANTS", Plants())
+    return plants if isinstance(plants, Plants) else Plants()
 
 
 class Clock:

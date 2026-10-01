@@ -36,9 +36,32 @@ class LedgerError(Exception):
     """Raised when an event cannot be appended."""
 
 
+def normalize(obj: Any) -> Any:
+    """Make a value JSON-portable: integral floats become ints (``3.0`` -> ``3``).
+
+    JavaScript's ``JSON.stringify`` has no ``3.0``, so without this a browser could
+    never recompute the same hash as Python. Applied to every event before it is
+    written and before it is hashed, so the file and the chain agree.
+    """
+    if isinstance(obj, bool):
+        return obj
+    if isinstance(obj, float) and obj.is_integer():
+        return int(obj)
+    if isinstance(obj, dict):
+        return {k: normalize(v) for k, v in obj.items()}
+    if isinstance(obj, list | tuple):
+        return [normalize(v) for v in obj]
+    return obj
+
+
 def canonical(obj: Any) -> bytes:
-    """Canonical JSON: sorted keys, no whitespace, UTF-8. Hash this, never the pretty form."""
-    return json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    """Canonical JSON: sorted keys, no whitespace, UTF-8, integral floats as ints.
+
+    Hash this, never the pretty form. The output is byte-identical to
+    ``JSON.stringify`` over sorted keys in JavaScript, which is what lets the
+    browser workbench verify and extend the same chain.
+    """
+    return json.dumps(normalize(obj), sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
 
 
 def sha256(data: bytes) -> str:
@@ -130,17 +153,19 @@ class Ledger:
             raise LedgerError(f"agent.kind must be one of {sorted(AGENT_KINDS)}, got {agent.get('kind')!r}")
         if not agent.get("id"):
             raise LedgerError("agent.id is required")
-        event = {
-            "seq": self._seq + 1,
-            "ts": ts or now_iso(),
-            "event_type": event_type,
-            "study_id": study_id,
-            "record_ref": record_ref,
-            "field": field,
-            "agent": agent,
-            "payload": payload,
-            "prev_hash": self._head,
-        }
+        event = normalize(
+            {
+                "seq": self._seq + 1,
+                "ts": ts or now_iso(),
+                "event_type": event_type,
+                "study_id": study_id,
+                "record_ref": record_ref,
+                "field": field,
+                "agent": agent,
+                "payload": payload,
+                "prev_hash": self._head,
+            }
+        )
         event["hash"] = event_hash(event)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with open(self.path, "a", encoding="utf-8") as f:
@@ -206,7 +231,7 @@ def tamper(path: str | Path, seq: int, field: str, new_value: Any, *, rehash: bo
         if event["seq"] != seq:
             continue
         before = json.loads(line)
-        set_path(event, field, new_value)
+        set_path(event, field, normalize(new_value))
         if rehash:
             event["hash"] = event_hash(event)
         lines[i] = json.dumps(event, sort_keys=True, ensure_ascii=False)

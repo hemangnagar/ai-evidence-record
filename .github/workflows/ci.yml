@@ -26,6 +26,7 @@ jobs:
           aiev verify
           if aiev exceptions; then echo "expected the planted exceptions"; exit 1; fi
           aiev datasheet --out demo/datasheet.html
+          aiev workbench --out demo/workbench.html
           aiev verify --manifest demo/manifest.json
           aiev tamper --seq 16 --field payload.value --set Migraine
           if aiev verify; then echo "expected a broken chain"; exit 1; fi

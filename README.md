@@ -10,6 +10,14 @@ The AI is pluggable and, for the record, irrelevant. The evidence record is the 
 
 All data in this repository is synthetic. There are no real subjects, sites, investigators or identifiers anywhere.
 
+## For the auditor: the browser workbench
+
+```
+aiev run-demo && aiev workbench      # writes demo/workbench.html; open it, no server needed
+```
+
+One self-contained page with every scenario from the session plan: read the site data, read the ledger raw, ask what the AI did to a record, tamper with a line and watch verification break, review a quarantined proposal against a running clock, move the model version bump and re-run, and read the exceptions and the datasheet as they change. The hash chain in the page is the same SHA-256 over the same canonical JSON as the CLI, so a ledger produced or extended in the browser downloads as `ledger.jsonl` and passes `aiev verify`. Nothing leaves the machine.
+
 ## 90-second demo
 
 ```
@@ -132,6 +140,7 @@ aiev tamper --seq 16 --field payload.value --set "Migraine" [--rehash]   # demo 
 aiev ask --record AE:AIEV-001-1042:3 [--field AEDECOD]   # full chain for one record, human-readable
 aiev exceptions [--json]                     # table of EX-xx findings; exit 1 if any
 aiev datasheet --out demo/datasheet.html [--pdf]   # + manifest.json
+aiev workbench --out demo/workbench.html     # self-contained browser page with every scenario
 aiev review --record AE:AIEV-001-1096:2 --reviewer rmehta [--decision approve|edit|reject]   # omit --decision for a timed, interactive review
 ```
 
@@ -161,7 +170,7 @@ Event types: `ai_output | review | promote | reject | correction | endorsement |
 
 ## What this is not
 
-Not an EDC. Not RBQM or central statistical monitoring. Not a medical coding product. Not trial-design AI. Not real-time data transport. No UI beyond the HTML datasheet. No real patient data. No authentication, no multi-tenancy. It is a demo of an evidence record, built to be broken by an auditor in an hour.
+Not an EDC. Not RBQM or central statistical monitoring. Not a medical coding product. Not trial-design AI. Not real-time data transport. No UI beyond the HTML datasheet and the single-page workbench. No real patient data. No authentication, no multi-tenancy. It is a demo of an evidence record, built to be broken by an auditor in an hour.
 
 ## Development
 
@@ -170,7 +179,7 @@ pip install -e ".[dev]"
 ruff check . && ruff format --check . && pytest
 ```
 
-Tests cover: the chain verifies and a single-byte tamper breaks it at that seq; the gate cannot promote without a review and signatures carry the required fields; each planted exception is detected and a clean ledger has zero; every scorecard row has a citation and `manifest.json` carries the ledger head hash.
+Tests cover: the browser engine and the Python engine verify each other's ledgers byte for byte (needs `node`); the chain verifies and a single-byte tamper breaks it at that seq; the gate cannot promote without a review and signatures carry the required fields; each planted exception is detected and a clean ledger has zero; every scorecard row has a citation and `manifest.json` carries the ledger head hash.
 
 ## Lineage
 

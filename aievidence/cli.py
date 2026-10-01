@@ -8,7 +8,6 @@ there are any, so both can sit in a pipeline.
 from __future__ import annotations
 
 import argparse
-import importlib.util
 import json
 import shutil
 import sys
@@ -21,10 +20,11 @@ from rich.table import Table
 from . import ask as askmod
 from . import datasheet as dsmod
 from . import rules as rulesmod
+from . import workbench as wbmod
 from .gate import CsvStore, Gate, GateError, ReviewerDirectory
 from .ledger import Ledger, LedgerError, tamper
 from .profile import load_profile
-from .scenario import Plants
+from .scenario import load_plants
 from .scenario import run as run_scenario
 from .signing import HmacSigner, verify_manifest
 
@@ -49,17 +49,6 @@ def _reviewers(args) -> ReviewerDirectory | None:
     return ReviewerDirectory.load(path) if path.exists() else None
 
 
-def _load_plants(demo_dir: Path) -> Plants:
-    """``demo/scenario.py`` is the editable source of truth; fall back to defaults when absent."""
-    path = demo_dir / "scenario.py"
-    if not path.exists():
-        return Plants()
-    spec = importlib.util.spec_from_file_location("aiev_demo_scenario", path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)  # type: ignore[union-attr]
-    return getattr(module, "PLANTS", Plants())
-
-
 def _parse_value(raw: str):
     try:
         return json.loads(raw)
@@ -77,7 +66,7 @@ def cmd_run_demo(args) -> int:
         from .ai.llm_coder import LLMCoder
 
         coder = LLMCoder()
-    summary = run_scenario(demo_dir, plants=_load_plants(demo_dir), coder=coder, seed=args.seed)
+    summary = run_scenario(demo_dir, plants=load_plants(demo_dir), coder=coder, seed=args.seed)
     console.print(f"wrote {summary.ledger_path} ({summary.events} events) and {summary.data_dir}/*.csv")
     console.print(
         f"coder {summary.coder}: {summary.ai_outputs} AI outputs, {summary.reviewed} reviewed, "
@@ -173,6 +162,13 @@ def cmd_datasheet(args) -> int:
     )
     if args.pdf:
         console.print(f"wrote {html_path.with_suffix('.pdf')}")
+    return 0
+
+
+def cmd_workbench(args) -> int:
+    _ledger(args)  # fails loudly if run-demo has not been run
+    out = wbmod.write(_demo_dir(args), args.out, load_profile(args.profile))
+    console.print(f"wrote {out}; open it in a browser (no server needed)")
     return 0
 
 
@@ -284,6 +280,10 @@ def build_parser() -> argparse.ArgumentParser:
     d.add_argument("--out", default="demo/datasheet.html")
     d.add_argument("--pdf", action="store_true", help="also write a PDF (needs weasyprint)")
     d.set_defaults(fn=cmd_datasheet)
+
+    wb = s.add_parser("workbench", help="write the self-contained browser workbench for the live session")
+    wb.add_argument("--out", default="demo/workbench.html")
+    wb.set_defaults(fn=cmd_workbench)
 
     rv = s.add_parser("review", help="review a quarantined AI output as a named reviewer")
     rv.add_argument("--record", required=True)

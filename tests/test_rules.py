@@ -46,7 +46,7 @@ def test_planted_scenario_finds_exactly_the_plants(demo_dir):
     ex01 = next(f for f in findings if f.id == "EX-01")
     assert ex01.record_ref == "AE:AIEV-001-1042:3"
     ex02 = next(f for f in findings if f.id == "EX-02")
-    assert ex02.record_ref == "AE:AIEV-001-1017:1" and "3.0s" in ex02.explanation
+    assert ex02.record_ref == "AE:AIEV-001-1017:1" and "took 3s" in ex02.explanation
     assert all(f.citation for f in findings)
 
 
