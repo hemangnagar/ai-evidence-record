@@ -1,0 +1,20 @@
+# Who may sign. The gate needs a printed name; the rules (EX-05) need a credential
+# and an entry here. tlindqvist is deliberately missing a credential so the live
+# demo can show what happens when someone without one signs.
+reviewers:
+  - id: rmehta
+    display_name: Rina Mehta
+    credential: PharmD, Clinical Data Manager
+    role: reviewer
+  - id: jokafor
+    display_name: James Okafor
+    credential: RN, CCRP, Clinical Research Associate
+    role: reviewer
+  - id: tlindqvist
+    display_name: Tove Lindqvist
+    credential: ""
+    role: reviewer
+  - id: pi_site01
+    display_name: Anand Raghavan
+    credential: MD, Principal Investigator, Site 01
+    role: investigator

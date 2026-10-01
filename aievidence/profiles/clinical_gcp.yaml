@@ -1,0 +1,199 @@
+# Clinical GCP profile for the AI Evidence Record.
+#
+# Everything an inspector might dispute lives here, not in code: which fields are
+# required on an AI output, the rubber-stamp threshold, the clause each exception
+# cites, and the crosswalk behind the ALCOA+ scorecard. A wrong clause number is
+# a one-line fix and changes the profile fingerprint on the next datasheet.
+#
+# VERIFY BEFORE THE DEMO. Clause numbers below were written from the handoff brief
+# and should be checked against the primary texts:
+#   - 21 CFR Part 11 at eCFR (11.10, 11.50, 11.70, 11.100, 11.200)
+#   - ICH E6(R3) final text, 6 Jan 2025 (Annex 1 section 4, data governance)
+#   - FDA draft guidance "Considerations for the Use of AI to Support Regulatory
+#     Decision-Making for Drug and Biological Products", Jan 2025, FDA-2024-D-4689
+#     (the 7-step risk-based credibility assessment framework)
+#   - FDA-EMA Guiding Principles of Good AI Practice in Drug Development, Jan 2026
+#   - 21 CFR 211.22(c), cited by analogy only (Purolea, Apr 2026)
+
+meta:
+  name: clinical_gcp
+  version: "0.1.0"
+  description: >
+    AI outputs touching clinical trial data under ICH E6(R3) and 21 CFR Part 11,
+    assessed against FDA's AI credibility framework and the FDA-EMA Good AI
+    Practice principles.
+  author: Hemang Nagar
+  authority_refs:
+    - id: part11
+      title: 21 CFR Part 11, Electronic Records; Electronic Signatures
+      url: https://www.ecfr.gov/current/title-21/chapter-I/subchapter-A/part-11
+    - id: e6r3
+      title: ICH E6(R3) Good Clinical Practice, final 6 Jan 2025
+      url: https://database.ich.org/sites/default/files/ICH_E6%28R3%29_Step4_FinalGuideline_2025_0106.pdf
+    - id: fda_ai
+      title: FDA draft guidance, Considerations for the Use of AI to Support Regulatory Decision-Making (Jan 2025, FDA-2024-D-4689)
+      url: https://www.fda.gov/regulatory-information/search-fda-guidance-documents
+    - id: fda_ema_gaip
+      title: FDA-EMA Guiding Principles of Good AI Practice in Drug Development (Jan 2026)
+      url: https://www.fda.gov/
+    - id: part211
+      title: 21 CFR 211.22(c), Responsibilities of quality control unit (cited by analogy)
+      url: https://www.ecfr.gov/current/title-21/chapter-I/subchapter-C/part-211/subpart-B/section-211.22
+
+required_ai_output_fields:
+  - inputs_hash
+  - prompt_hash
+  - model_id
+  - model_version
+
+thresholds:
+  rubber_stamp_seconds: 5
+
+rules:
+  EX-01:
+    name: Unreviewed promotion
+    severity: critical
+    citation: "21 CFR 211.22(c) by analogy (Purolea, Apr 2026); ICH E6(R3) Annex 1 §4 (data changes authorised and in the audit trail)"
+    explanation: "promote at seq {seq} wrote {field} for {record_ref} with no approving review between the AI output and the promotion"
+  EX-02:
+    name: Rubber-stamp review
+    severity: major
+    citation: "ICH E6(R3) Annex 1 §4.2 (audit trail review must be meaningful and itself documented)"
+    explanation: "review at seq {seq} by {reviewer} took {review_seconds}s, below the {threshold}s threshold"
+  EX-03:
+    name: Model version drift
+    severity: major
+    citation: "FDA AI credibility framework step 7 and lifecycle maintenance plan; 21 CFR 11.10(k) documentation and change controls"
+    explanation: "{model_id} ran as version {version} at seq {seq}; the last declared version was {declared} and no model_change event precedes it"
+  EX-04:
+    name: Post-endorsement change
+    severity: critical
+    citation: "ICH E6(R3) Annex 1 §4.2 (investigator endorsement of reported data; changes after endorsement are controlled)"
+    explanation: "{event_type} at seq {seq} changed {record_ref} after the investigator endorsement at seq {endorsed_seq}, with no re-endorsement"
+  EX-05:
+    name: Reviewer without credential
+    severity: major
+    citation: "21 CFR 11.10(d),(g) access and authority checks; 11.100 signature uniqueness"
+    explanation: "review at seq {seq} was signed by {reviewer}, who {problem}"
+  EX-06:
+    name: Missing provenance fields
+    severity: major
+    citation: "FDA-EMA Good AI Practice (Jan 2026): provenance traceable and verifiable; ALCOA+ Attributable and Traceable"
+    explanation: "ai_output at seq {seq} is missing {missing}"
+  EX-07:
+    name: Chain integrity failure
+    severity: critical
+    citation: "21 CFR 11.10(e) secure, computer-generated, time-stamped audit trail"
+    explanation: "ledger chain breaks at seq {seq}: {reason}"
+
+# Record field -> ALCOA+ attribute -> clause. The datasheet prints this table verbatim.
+crosswalk:
+  - field: agent.id / agent.version (model)
+    alcoa: Attributable
+    part11: 11.10(k)
+    e6r3: Annex 1 §4.3 computerised systems
+    fda_step: Step 2 (context of use), Step 7 (adequacy; lifecycle)
+  - field: inputs_hash, prompt_hash
+    alcoa: Original, Traceable
+    part11: 11.10(b),(c)
+    e6r3: Annex 1 §4.2 data life cycle (metadata)
+    fda_step: Steps 5 and 6 (execution and results documented)
+  - field: ts
+    alcoa: Contemporaneous
+    part11: 11.10(e)
+    e6r3: Annex 1 §4.2 (audit trail)
+    fda_step: ""
+  - field: hash, prev_hash
+    alcoa: Enduring, Consistent
+    part11: 11.10(c),(e)
+    e6r3: Annex 1 §4.3 (audit trail integrity)
+    fda_step: ""
+  - field: review.* and signature manifestation
+    alcoa: Attributable, Accurate
+    part11: 11.50, 11.70, 11.100, 11.200
+    e6r3: Annex 1 §4.2 (data changes authorised)
+    fda_step: Step 3 (model risk; human oversight)
+  - field: endorsement
+    alcoa: Complete, Accurate
+    part11: "11.70"
+    e6r3: Annex 1 §4.2 (investigator endorsement)
+    fda_step: ""
+  - field: model_change
+    alcoa: Consistent
+    part11: 11.10(k)
+    e6r3: Annex 1 §4.3 (validation, change control)
+    fda_step: Step 7
+  - field: datasheet context_of_use
+    alcoa: ""
+    part11: ""
+    e6r3: ""
+    fda_step: Steps 1 and 2
+  - field: datasheet model_risk
+    alcoa: ""
+    part11: ""
+    e6r3: ""
+    fda_step: Step 3 (influence × consequence)
+
+# ALCOA+ scorecard. Each attribute names the ledger fields that satisfy it, the
+# clause, and the exception IDs that would flag it.
+alcoa:
+  - attribute: Attributable
+    fields: agent.id, agent.version, agent.credential, review.signature.printed_name
+    citation: "21 CFR 11.10(d),(g); 11.50; ICH E6(R3) Annex 1 §4.2"
+    flagged_by: [EX-01, EX-05, EX-06]
+  - attribute: Legible
+    fields: JSONL events; HTML datasheet; `aiev ask` chain rendering
+    citation: "21 CFR 11.10(b) accurate and complete copies in human-readable form"
+    flagged_by: []
+  - attribute: Contemporaneous
+    fields: ts on every event; review.signature.signed_at
+    citation: "21 CFR 11.10(e); ICH E6(R3) Annex 1 §4.2"
+    flagged_by: [EX-02]
+  - attribute: Original
+    fields: inputs_hash, prompt_hash (what the model saw), payload.value (what it returned)
+    citation: "21 CFR 11.10(b),(c); FDA-EMA Good AI Practice provenance principle"
+    flagged_by: [EX-06]
+  - attribute: Accurate
+    fields: review.decision, review.edited_value, correction.supersedes_seq
+    citation: "21 CFR 11.70 signature/record linking; ICH E6(R3) Annex 1 §4.2"
+    flagged_by: [EX-01, EX-02, EX-04]
+  - attribute: Complete
+    fields: endorsement; required_ai_output_fields present on every ai_output
+    citation: "ICH E6(R3) Annex 1 §4.2 (investigator endorsement); 21 CFR 11.10(b)"
+    flagged_by: [EX-04, EX-06]
+  - attribute: Consistent
+    fields: model_change; agent.version stable between declared changes; prev_hash ordering
+    citation: "21 CFR 11.10(k); FDA AI credibility framework lifecycle maintenance"
+    flagged_by: [EX-03, EX-07]
+  - attribute: Enduring
+    fields: append-only JSONL; hash chain; signed manifest
+    citation: "21 CFR 11.10(c),(e)"
+    flagged_by: [EX-07]
+  - attribute: Available
+    fields: ledger file; datasheet; manifest verifiable offline
+    citation: "21 CFR 11.10(b),(c) ready retrieval throughout the records retention period"
+    flagged_by: [EX-07]
+
+# Context of use and model risk per AI touchpoint (FDA framework steps 1-3).
+# Keyed by the ledger `field` the touchpoint writes to.
+touchpoints:
+  AEDECOD:
+    name: Adverse event coding
+    question: "Which preferred term does this site-entered verbatim correspond to?"
+    influences: "The coded term that feeds safety tables and signal detection."
+    decides: "A credentialed clinical data manager; the model only proposes."
+    influence: medium
+    consequence: high
+  QUERY:
+    name: Data query generation
+    question: "Does this record contain a date, severity or consent inconsistency the site must resolve?"
+    influences: "Whether a query is raised to the site; the data itself is unchanged until the site answers."
+    decides: "A clinical data manager, who can suppress or reword the query before issue."
+    influence: low
+    consequence: medium
+
+# influence x consequence -> risk tier (FDA framework step 3). Edit freely.
+risk_matrix:
+  low:    { low: low,    medium: low,    high: medium }
+  medium: { low: low,    medium: medium, high: high }
+  high:   { low: medium, medium: high,   high: high }
